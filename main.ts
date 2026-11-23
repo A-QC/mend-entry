@@ -131,6 +131,28 @@ function findTier(lines: string[], o: string[], strict: boolean, from: number): 
   return null;
 }
 
+/**
+ * For a V4A end-of-file chunk (section 8): the first tier at which O occurs ending at the file's last
+ * line, at or after `from`. An end-of-file chunk takes only such an occurrence, so the tiers are ranked
+ * over those occurrences alone — a mid-file occurrence at a stricter tier does not block the end one.
+ */
+function findEofTier(lines: string[], o: string[], strict: boolean, from: number): { tier: number; occ: number[] } | null {
+  const want = lines.length - o.length;
+  if (want < from) return null;
+  const tiers = strict ? [0] : [0, 1, 2];
+  for (const t of tiers) {
+    let ok = true;
+    for (let j = 0; j < o.length; j += 1) {
+      if (!eqTier(lines[want + j]!, o[j]!, t)) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) return { tier: t, occ: [want] };
+  }
+  return null;
+}
+
 /** One line of N: a context line (index into O, written as the file's own line) or an added line (its own text). */
 type NItem = { ctx: number } | { add: string };
 
@@ -632,19 +654,10 @@ function v4aEdit(sec: VSection, ctx: Ctx): Edit {
         cursor = pos + add.length;
         continue;
       }
-      const found = findTier(lines, o, ctx.strict, cursor);
-      let pos = -1;
-      let tier = 0;
-      if (found !== null) {
-        tier = found.tier;
-        if (chunk.eof) {
-          const want = lines.length - o.length;
-          if (found.occ.includes(want) && want >= cursor) pos = want;
-        } else {
-          pos = found.occ[0]!;
-        }
-      }
-      if (pos < 0) throw new Fail('no-match', p);
+      const found = chunk.eof ? findEofTier(lines, o, ctx.strict, cursor) : findTier(lines, o, ctx.strict, cursor);
+      if (found === null) throw new Fail('no-match', p);
+      const tier = found.tier;
+      const pos = found.occ[0]!;
       const built = buildLines(n, lines, pos, tier, o);
       lines.splice(pos, o.length, ...built);
       cursor = pos + built.length;
